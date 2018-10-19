@@ -80,7 +80,7 @@ void BayesianOptimization::Clear() {
 VectorXd BayesianOptimization::ProposeLocation(const MatrixXd& x_sample, const MatrixXd& y_sample, int n_restarts) {
   auto f = [&](const VectorXd& x) {
     // Minimization objective is the negative acquisition function
-    return -ExpectedImprovement(x, x_sample)[0];
+    return -ExpectedImprovement(x.transpose(), x_sample)[0];
   };
 
   auto min_obj = [&](const VectorXd& x, VectorXd& grad) {
