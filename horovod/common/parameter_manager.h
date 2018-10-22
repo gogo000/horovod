@@ -163,7 +163,7 @@ private:
 
   class BayesianParameter : public TunableParameter<Eigen::VectorXd> {
   public:
-    BayesianParameter(std::vector<std::pair<double, double>> bounds,
+    BayesianParameter(std::vector<std::pair<double, double>> bounds, std::vector<Eigen::VectorXd> test_points,
                       ParameterManager& parent, ITunableParameter* const next_param);
 
   private:
@@ -173,6 +173,7 @@ private:
 
     std::unique_ptr<BayesianOptimization> bayes_;
     std::vector<std::pair<double, double>> bounds_;
+    std::vector<Eigen::VectorXd> test_points_;
     int32_t iteration_;
   };
 

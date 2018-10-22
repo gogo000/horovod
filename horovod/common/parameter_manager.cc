@@ -39,11 +39,25 @@ std::vector<double> CycleTimes() {
   return results;
 }
 
+Eigen::VectorXd CreateVector(double x1, double x2) {
+  Eigen::VectorXd v(2);
+  v(0) = x1;
+  v(1) = x2;
+  return v;
+}
+
 // ParameterManager
 ParameterManager::ParameterManager() :
     hierarchical_allreduce_(CategoricalParameter<bool>(std::vector<bool>{false, true}, *this, nullptr)),
-    joint_params_(BayesianParameter(std::vector<std::pair<double, double>>{
-      std::pair<double, double>(0, 64), std::pair<double, double>(0, 100)
+    joint_params_(BayesianParameter(
+    std::vector<std::pair<double, double>>{
+      std::pair<double, double>(0, 64),
+      std::pair<double, double>(0, 100)
+    }, std::vector<Eigen::VectorXd>{
+      CreateVector(4, 5),
+      CreateVector(32, 50),
+      CreateVector(16, 25),
+      CreateVector(8, 10)
     }, *this, nullptr)),
 //    tensor_fusion_threshold_mb_(CategoricalParameter<int64_t>(
 //        std::vector<int64_t>{0, 1, 2, 4, 8, 16, 32, 64}, *this, nullptr)),
@@ -91,7 +105,7 @@ void ParameterManager::Initialize(int32_t rank, int32_t root_rank, MPI_Comm mpi_
   if (rank_ == root_rank && !file_name.empty()) {
     file_.open(file_name, std::ios::out | std::ios::trunc);
     if (file_.good()) {
-      file_ << "cycle_time_ms,tensor_fusion_threshold,score" << std::endl;
+      file_ << "hierarchical_allreduce,cycle_time_ms,tensor_fusion_threshold,score" << std::endl;
       writing_ = true;
     }
   }
@@ -168,15 +182,21 @@ void ParameterManager::Tune(double score) {
     std::cerr << "WARMUP DONE | hierarchical tunable="
               << hierarchical_allreduce_.IsTunable() << " value=" << HierarchicalAllreduce() << std::endl;
   } else {
-    std::cerr << "(" << rank_ << ") " << total_bytes_ << ", " << total_seconds_ << " "
-              << "[" << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score << "  "
-              << "[" << joint_params_.BestValue()[1] << " ms , " << joint_params_.BestValue()[0] << " mb] "
-              << leaf_param_->BestScore()
-              << std::endl;
+//    std::cerr << "(" << rank_ << ") " << total_bytes_ << ", " << total_seconds_ << " "
+//              << "[" << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score << "  "
+//              << "[" << joint_params_.BestValue()[1] << " ms , " << joint_params_.BestValue()[0] << " mb] "
+//              << leaf_param_->BestScore()
+//              << std::endl;
 
     if (rank_ == root_rank_) {
+      std::cerr << "[" << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score
+                << std::endl;
+      std::cerr << total_bytes_ << " bytes " << total_seconds_ << " seconds" << std::endl;
       if (writing_ && file_.good()) {
-        file_ << joint_params_.Value()[1] << "," << joint_params_.Value()[0] << "," << score << std::endl;
+        file_ << hierarchical_allreduce_.Value() << ","
+              << joint_params_.Value()[1] << ","
+              << joint_params_.Value()[0] << "," << score
+              << std::endl;
       }
 
       leaf_param_->Tune(score);
@@ -393,11 +413,13 @@ Eigen::VectorXd GetTestPoint(std::vector<std::pair<double, double>> bounds, doub
 
 ParameterManager::BayesianParameter::BayesianParameter(
     std::vector<std::pair<double, double>> bounds,
+    std::vector<Eigen::VectorXd> test_points,
     ParameterManager& parent,
     ParameterManager::ITunableParameter* const next_param) :
-    TunableParameter<Eigen::VectorXd>(GetTestPoint(bounds, 1.0 / 3.0), parent, next_param),
+    TunableParameter<Eigen::VectorXd>(test_points[0], parent, next_param),
     bayes_(new BayesianOptimization(bounds.size(), bounds, 0.2)),
     bounds_(bounds),
+    test_points_(test_points),
     iteration_(0) {
   ResetState();
 }
@@ -406,10 +428,10 @@ void ParameterManager::BayesianParameter::OnTune(double score, Eigen::VectorXd& 
   bayes_->AddSample(value, score);
 
   iteration_++;
-  if (iteration_ > 1) {
-    value = bayes_->NextSample();
+  if (iteration_ < test_points_.size()) {
+    value = test_points_[iteration_];
   } else {
-    value = GetTestPoint(bounds_, 2.0 / 3.0);
+    value = bayes_->NextSample();
   }
 }
 

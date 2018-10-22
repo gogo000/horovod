@@ -87,7 +87,7 @@ void GaussianProcessRegressor::Fit(MatrixXd* x_train, MatrixXd* y_train) {
 
   VectorXd x = VectorXd::Ones(2);
   double fx;
-  int niter = solver.minimize(nll_fn, x, fx);
+  solver.minimize(nll_fn, x, fx);
 
   if (!isnan(x)) {
     length_ = x[0];
