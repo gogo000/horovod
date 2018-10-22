@@ -1898,7 +1898,7 @@ bool RunLoopOnce(HorovodGlobalState& state, bool is_coordinator) {
     }
 
     if (state.param_manager.IsAutoTuning()) {
-      double duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      double duration = std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - start_time).count();
       MPI_Bcast(&duration, 1, MPI_DOUBLE, RANK_ZERO, state.mpi_comm);
       state.param_manager.Update(tensor_names, total_tensor_size, duration);
