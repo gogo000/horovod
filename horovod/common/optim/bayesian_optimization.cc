@@ -84,7 +84,7 @@ VectorXd BayesianOptimization::ProposeLocation(const MatrixXd& x_sample, const M
   };
 
   auto min_obj = [&](const VectorXd& x, VectorXd& grad) {
-    double f0 = CheckBounds(x) ? f(x) : 1.0;
+    double f0 = CheckBounds(x) ? f(x) : std::numeric_limits<double>::max();
     GaussianProcessRegressor::ApproxFPrime(x, f, f0, grad);
     return f0;
   };
@@ -151,7 +151,7 @@ VectorXd BayesianOptimization::ExpectedImprovement(const MatrixXd& x, const Matr
 
 bool BayesianOptimization::CheckBounds(const Eigen::VectorXd& x) {
   for (int i = 0; i < x.size(); i++) {
-    if (x[0] < bounds_[i].first || x[0] > bounds_[i].second) {
+    if (x[i] < bounds_[i].first || x[i] > bounds_[i].second) {
       return false;
     }
   }

@@ -54,7 +54,6 @@ ParameterManager::ParameterManager() :
       std::pair<double, double>(0, 64),
       std::pair<double, double>(0, 100)
     }, std::vector<Eigen::VectorXd>{
-      CreateVector(0, 0),
       CreateVector(4, 5),
       CreateVector(32, 50),
       CreateVector(16, 25),
@@ -156,12 +155,10 @@ void ParameterManager::Update(const std::vector<std::string>& tensor_names, int6
     return;
   }
 
-//  if (tensor_names.size() > 0) {
-//    std::cerr << "ParameterManager::Update: " << tensor_names.size() << " tesnors " << bytes << " bytes " << seconds << " seconds" << std::endl;
-//  }
   for (const std::string& tensor_name : tensor_names) {
     int32_t cycle = tensor_counts_[tensor_name]++;
     if (cycle > cycle_) {
+      std::cerr << total_bytes_ << " bytes " << total_seconds_ << " seconds" << std::endl;
       scores_[cycle_] = total_bytes_ / total_seconds_;
       total_bytes_ = 0;
       total_seconds_ = 0;
@@ -195,7 +192,6 @@ void ParameterManager::Tune(double score) {
     if (rank_ == root_rank_) {
       std::cerr << "[" << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score
                 << std::endl;
-      std::cerr << total_bytes_ << " bytes " << total_seconds_ << " seconds" << std::endl;
       if (writing_ && file_.good()) {
         file_ << hierarchical_allreduce_.Value() << ","
               << joint_params_.Value()[1] << ","
