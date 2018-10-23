@@ -117,7 +117,10 @@ void ParameterManager::SetAutoTuning(bool active) {
   }
   active_ = active;
   if (!active_ && rank_ == root_rank_) {
-    std::cout << "finished autotuning" << std::endl;
+    std::cerr << "BEST [" << hierarchical_allreduce_.Value() << " "
+              << joint_params_.BestValue()[1] << " ms , " << joint_params_.BestValue()[0] << " mb ] "
+              << hierarchical_allreduce_.BestScore()
+              << std::endl;
   }
 };
 
@@ -190,7 +193,8 @@ void ParameterManager::Tune(double score) {
 //              << std::endl;
 
     if (rank_ == root_rank_) {
-      std::cerr << "[" << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score
+      std::cerr << "[" << hierarchical_allreduce_.Value() << " "
+                << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score
                 << std::endl;
       if (writing_ && file_.good()) {
         file_ << hierarchical_allreduce_.Value() << ","
