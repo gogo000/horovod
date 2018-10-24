@@ -162,20 +162,42 @@ private:
     int32_t index_;
   };
 
+  enum BayesianVariable { fusion_buffer_threshold_mb, cycle_time_ms };
+
+  struct BayesianVariableConfig {
+    BayesianVariable variable;
+    std::pair<double, double> bounds;
+  };
+
   class BayesianParameter : public TunableParameter<Eigen::VectorXd> {
   public:
-    BayesianParameter(std::vector<std::pair<double, double>> bounds, std::vector<Eigen::VectorXd> test_points,
+    BayesianParameter(std::vector<BayesianVariableConfig> variables, std::vector<Eigen::VectorXd> test_points,
                       ParameterManager& parent, ITunableParameter* const next_param);
+
+    void SetValue(BayesianVariable variable, double value, bool fixed);
+    double Value(BayesianVariable variable) const;
+    double BestValue(BayesianVariable variable) const;
 
   private:
     void OnTune(double score, Eigen::VectorXd& value);
     bool IsDoneTuning() const;
     void ResetState();
+    void ResetBayes();
 
-    std::unique_ptr<BayesianOptimization> bayes_;
-    std::vector<std::pair<double, double>> bounds_;
+    std::vector<BayesianVariableConfig> variables_;
     std::vector<Eigen::VectorXd> test_points_;
     int32_t iteration_;
+
+    struct EnumClassHash {
+      template <typename T>
+      std::size_t operator()(T t) const {
+        return static_cast<std::size_t>(t);
+      }
+    };
+
+    std::unique_ptr<BayesianOptimization> bayes_;
+    std::unordered_map<BayesianVariable, double, EnumClassHash> fixed_values_;
+    std::unordered_map<BayesianVariable, int32_t, EnumClassHash> index_;
   };
 
   CategoricalParameter<bool> hierarchical_allreduce_;

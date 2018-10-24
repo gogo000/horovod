@@ -50,15 +50,15 @@ Eigen::VectorXd CreateVector(double x1, double x2) {
 ParameterManager::ParameterManager() :
     hierarchical_allreduce_(CategoricalParameter<bool>(std::vector<bool>{false, true}, *this, nullptr)),
     joint_params_(BayesianParameter(
-    std::vector<std::pair<double, double>>{
-      std::pair<double, double>(0, 64),
-      std::pair<double, double>(0, 100)
-    }, std::vector<Eigen::VectorXd>{
-      CreateVector(4, 5),
-      CreateVector(32, 50),
-      CreateVector(16, 25),
-      CreateVector(8, 10)
-    }, *this, nullptr)),
+      std::vector<BayesianVariableConfig>{
+        { BayesianVariable::fusion_buffer_threshold_mb, std::pair<double, double>(0, 64) },
+        { BayesianVariable::cycle_time_ms, std::pair<double, double>(0, 100) }
+      }, std::vector<Eigen::VectorXd>{
+        CreateVector(4, 5),
+        CreateVector(32, 50),
+        CreateVector(16, 25),
+        CreateVector(8, 10)
+      }, *this, nullptr)),
 //    tensor_fusion_threshold_mb_(CategoricalParameter<int64_t>(
 //        std::vector<int64_t>{0, 1, 2, 4, 8, 16, 32, 64}, *this, nullptr)),
 //    tensor_fusion_threshold_mb_(NumericParameter<int64_t>(
@@ -117,8 +117,8 @@ void ParameterManager::SetAutoTuning(bool active) {
   }
   active_ = active;
   if (!active_ && rank_ == root_rank_) {
-    std::cerr << "BEST [" << hierarchical_allreduce_.Value() << " "
-              << joint_params_.BestValue()[1] << " ms , " << joint_params_.BestValue()[0] << " mb ] "
+    std::cerr << "BEST [" << hierarchical_allreduce_.Value() << ", "
+              << joint_params_.BestValue(cycle_time_ms) << " ms , " << joint_params_.BestValue(fusion_buffer_threshold_mb) << " mb ] "
               << hierarchical_allreduce_.BestScore()
               << std::endl;
   }
@@ -133,24 +133,22 @@ void ParameterManager::SetHierarchicalAllreduce(bool value, bool fixed) {
 }
 
 int64_t ParameterManager::TensorFusionThresholdBytes() const {
-  int64_t b = active_ ? joint_params_.Value()[0] : joint_params_.BestValue()[0];
-  return b * 1024 * 1024;
+  double b = active_ ?
+      joint_params_.Value(fusion_buffer_threshold_mb) :
+      joint_params_.BestValue(fusion_buffer_threshold_mb);
+  return int64_t(b * 1024 * 1024);
 };
 
 void ParameterManager::SetTensorFusionThresholdBytes(int64_t threshold, bool fixed) {
-  Eigen::VectorXd v = joint_params_.BestValue();
-  v[0] = threshold / (1024 * 1024);
-  joint_params_.SetValue(v, fixed);
+  joint_params_.SetValue(fusion_buffer_threshold_mb, threshold / (1024 * 1024), fixed);
 }
 
 double ParameterManager::CycleTimeMs() const {
-  return active_ ? joint_params_.Value()[1] : joint_params_.BestValue()[1];
+  return active_ ? joint_params_.Value(cycle_time_ms) : joint_params_.BestValue(cycle_time_ms);
 };
 
-void ParameterManager::SetCycleTimeMs(double cycle_time_ms, bool fixed) {
-  Eigen::VectorXd v = joint_params_.BestValue();
-  v[1] = cycle_time_ms;
-  joint_params_.SetValue(v, fixed);
+void ParameterManager::SetCycleTimeMs(double value, bool fixed) {
+  joint_params_.SetValue(cycle_time_ms, value, fixed);
 }
 
 void ParameterManager::Update(const std::vector<std::string>& tensor_names, int64_t bytes, double seconds) {
@@ -194,12 +192,12 @@ void ParameterManager::Tune(double score) {
 
     if (rank_ == root_rank_) {
       std::cerr << "[" << hierarchical_allreduce_.Value() << " "
-                << joint_params_.Value()[1] << " ms , " << joint_params_.Value()[0] << " mb ] " << score
+                << joint_params_.Value(cycle_time_ms) << ", ms , " << joint_params_.Value(fusion_buffer_threshold_mb) << " mb ] " << score
                 << std::endl;
       if (writing_ && file_.good()) {
         file_ << hierarchical_allreduce_.Value() << ","
-              << joint_params_.Value()[1] << ","
-              << joint_params_.Value()[0] << "," << score
+              << joint_params_.Value(cycle_time_ms) << ","
+              << joint_params_.Value(fusion_buffer_threshold_mb) << "," << score
               << std::endl;
       }
 
@@ -222,8 +220,8 @@ void ParameterManager::SyncParams(double last_score) {
   Params params;
   if (rank_ == root_rank_) {
     params.hierarchical_allreduce = hierarchical_allreduce_.Value();
-    params.tensor_fusion_threshold = joint_params_.Value()[0];
-    params.cycle_time = joint_params_.Value()[1];
+    params.tensor_fusion_threshold = joint_params_.Value(fusion_buffer_threshold_mb);
+    params.cycle_time = joint_params_.Value(cycle_time_ms);
     params.last_score = last_score;
     params.active = active_;
   }
@@ -233,10 +231,8 @@ void ParameterManager::SyncParams(double last_score) {
     hierarchical_allreduce_.SetValue(params.hierarchical_allreduce, true);
     hierarchical_allreduce_.UpdateBestValue(params.last_score);
 
-    Eigen::VectorXd v(2);
-    v(0) = params.tensor_fusion_threshold;
-    v(1) = params.cycle_time;
-    joint_params_.SetValue(v, true);
+    joint_params_.SetValue(fusion_buffer_threshold_mb, params.tensor_fusion_threshold, true);
+    joint_params_.SetValue(cycle_time_ms, params.cycle_time, true);
     joint_params_.UpdateBestValue(params.last_score);
 
     active_ = params.active;
@@ -283,7 +279,6 @@ void ParameterManager::TunableParameter<T>::SetValue(T value, bool fixed) {
   best_score_ = 0;
 
   if (fixed) {
-    // TODO(tgaddair): this breaks Bayesian optimization as this makes all parameters constant
     value_ = value;
     tunable_ = false;
   }
@@ -416,16 +411,43 @@ Eigen::VectorXd GetTestPoint(std::vector<std::pair<double, double>> bounds, doub
 }
 
 ParameterManager::BayesianParameter::BayesianParameter(
-    std::vector<std::pair<double, double>> bounds,
+    std::vector<BayesianVariableConfig> variables,
     std::vector<Eigen::VectorXd> test_points,
     ParameterManager& parent,
     ParameterManager::ITunableParameter* const next_param) :
     TunableParameter<Eigen::VectorXd>(test_points[0], parent, next_param),
-    bayes_(new BayesianOptimization(bounds.size(), bounds, 0.2)),
-    bounds_(bounds),
+    variables_(variables),
     test_points_(test_points),
     iteration_(0) {
+  ResetBayes();
   ResetState();
+}
+
+void ParameterManager::BayesianParameter::SetValue(BayesianVariable variable, double value, bool fixed) {
+  if (fixed) {
+    fixed_values_[variable] = value;
+    ResetBayes();
+  } else {
+    Eigen::VectorXd v = TunableParameter::BestValue();
+    v[index_[variable]] = value;
+    TunableParameter::SetValue(v, false);
+  }
+}
+
+double ParameterManager::BayesianParameter::Value(BayesianVariable variable) const {
+  auto elem = fixed_values_.find(variable);
+  if (elem != fixed_values_.end()) {
+    return elem->second;
+  }
+  return TunableParameter::Value()[index_.at(variable)];
+}
+
+double ParameterManager::BayesianParameter::BestValue(BayesianVariable variable) const {
+  auto elem = fixed_values_.find(variable);
+  if (elem != fixed_values_.end()) {
+    return elem->second;
+  }
+  return TunableParameter::BestValue()[index_.at(variable)];
 }
 
 void ParameterManager::BayesianParameter::OnTune(double score, Eigen::VectorXd& value) {
@@ -446,6 +468,22 @@ bool ParameterManager::BayesianParameter::IsDoneTuning() const {
 void ParameterManager::BayesianParameter::ResetState() {
   iteration_ = 0;
   bayes_->Clear();
+}
+
+void ParameterManager::BayesianParameter::ResetBayes() {
+  index_.clear();
+
+  std::vector<std::pair<double, double>> bounds;
+  int i = 0;
+  for (auto var : variables_) {
+    if (fixed_values_.find(var.variable) != fixed_values_.end()) {
+      bounds.push_back(var.bounds);
+      index_[var.variable] = i;
+      i++;
+    }
+  }
+
+  bayes_.reset(new BayesianOptimization(bounds.size(), bounds, 0.2));
 }
 
 } // namespace common
