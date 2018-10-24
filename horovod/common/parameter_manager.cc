@@ -140,7 +140,7 @@ int64_t ParameterManager::TensorFusionThresholdBytes() const {
 };
 
 void ParameterManager::SetTensorFusionThresholdBytes(int64_t threshold, bool fixed) {
-  joint_params_.SetValue(fusion_buffer_threshold_mb, threshold / (1024 * 1024), fixed);
+  joint_params_.SetValue(fusion_buffer_threshold_mb, double(threshold) / (1024 * 1024), fixed);
 }
 
 double ParameterManager::CycleTimeMs() const {
@@ -191,8 +191,8 @@ void ParameterManager::Tune(double score) {
 //              << std::endl;
 
     if (rank_ == root_rank_) {
-      std::cerr << "[" << hierarchical_allreduce_.Value() << " "
-                << joint_params_.Value(cycle_time_ms) << ", ms , " << joint_params_.Value(fusion_buffer_threshold_mb) << " mb ] " << score
+      std::cerr << "[" << hierarchical_allreduce_.Value() << ", "
+                << joint_params_.Value(cycle_time_ms) << " ms , " << joint_params_.Value(fusion_buffer_threshold_mb) << " mb ] " << score
                 << std::endl;
       if (writing_ && file_.good()) {
         file_ << hierarchical_allreduce_.Value() << ","
@@ -287,6 +287,14 @@ void ParameterManager::TunableParameter<T>::SetValue(T value, bool fixed) {
 template <class T>
 void ParameterManager::TunableParameter<T>::SetCurrentValue(T value) {
   value_ = value;
+}
+
+template <class T>
+void ParameterManager::TunableParameter<T>::Reinitialize(T value) {
+  initial_value_ = value;
+  value_ = value;
+  best_value_ = value;
+  best_score_ = 0;
 }
 
 template <class T>
@@ -455,7 +463,7 @@ void ParameterManager::BayesianParameter::OnTune(double score, Eigen::VectorXd& 
 
   iteration_++;
   if (iteration_ < test_points_.size()) {
-    value = test_points_[iteration_];
+    value = FilterTestPoint(iteration_);
   } else {
     value = bayes_->NextSample();
   }
@@ -474,16 +482,33 @@ void ParameterManager::BayesianParameter::ResetBayes() {
   index_.clear();
 
   std::vector<std::pair<double, double>> bounds;
-  int i = 0;
+  int j = 0;
   for (auto var : variables_) {
-    if (fixed_values_.find(var.variable) != fixed_values_.end()) {
+    if (fixed_values_.find(var.variable) == fixed_values_.end()) {
       bounds.push_back(var.bounds);
-      index_[var.variable] = i;
-      i++;
+      index_[var.variable] = j;
+      j++;
     }
   }
 
   bayes_.reset(new BayesianOptimization(bounds.size(), bounds, 0.2));
+  Reinitialize(FilterTestPoint(0));
+}
+
+Eigen::VectorXd ParameterManager::BayesianParameter::FilterTestPoint(int i) {
+  Eigen::VectorXd& test_point = test_points_[i];
+  Eigen::VectorXd filtered_point(test_point.size() - fixed_values_.size());
+
+  int k = 0;
+  for (int j = 0; j < test_point.size(); j++) {
+    BayesianVariable variable = variables_[j].variable;
+    if (fixed_values_.find(variable) == fixed_values_.end()) {
+      filtered_point(k) = test_point(j);
+      k++;
+    }
+  }
+
+  return filtered_point;
 }
 
 } // namespace common

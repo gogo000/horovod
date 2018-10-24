@@ -105,6 +105,7 @@ private:
 
   protected:
     void SetCurrentValue(T value);
+    void Reinitialize(T value);
 
   private:
     void TuneNextParameter();
@@ -183,6 +184,7 @@ private:
     bool IsDoneTuning() const;
     void ResetState();
     void ResetBayes();
+    Eigen::VectorXd FilterTestPoint(int i);
 
     std::vector<BayesianVariableConfig> variables_;
     std::vector<Eigen::VectorXd> test_points_;
